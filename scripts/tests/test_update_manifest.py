@@ -58,6 +58,13 @@ class UpdateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(update_manifest.ManifestError, "WallpaperMachine-1.4.0-arm64.dmg"):
             update_manifest.manifest("v1.4.0", "owner/app", self.notes, other)
 
+    def test_x86_64_image_name_is_accepted_when_requested(self):
+        image = self.root / "WallpaperMachine-1.4.0-x86_64.dmg"
+        image.write_bytes(b"intel")
+        content = update_manifest.manifest("v1.4.0", "owner/app", self.notes, image, architecture="x86_64")
+        [asset] = content["assets"]
+        self.assertEqual(asset["name"], "WallpaperMachine-1.4.0-x86_64.dmg")
+
     def test_malformed_tag_and_repository_are_refused(self):
         for tag in ("1.4.0", "v1.4", "v1.4.0-beta"):
             with self.subTest(tag=tag), self.assertRaises(update_manifest.ManifestError):

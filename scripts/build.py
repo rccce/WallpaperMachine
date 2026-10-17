@@ -32,6 +32,7 @@ VERBOSE = False
 
 # project.yml's deployment target and app icon; the icon is compiled with them.
 DEPLOYMENT_TARGET = "15.0"
+ARCHITECTURES = ("arm64", "x86_64")
 APP_ICON = APP / "Resources/AppIcon.icon"
 ASSET_CATALOG = APP / "Resources/Assets.xcassets"
 # What actool writes for the app icon: the catalog, the legacy icon file, and the
@@ -60,7 +61,7 @@ def repository_commit(root=ROOT):
     return subprocess.check_output(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], text=True).strip()
 
 
-def build_environment():
+def build_environment(architecture=None):
     result = os.environ.copy()
     prefix = subprocess.check_output(["brew", "--prefix"], text=True).strip()
     if not (Path(prefix) / "opt/mwe-ffmpeg/lib/pkgconfig/libavcodec.pc").is_file():
@@ -76,11 +77,18 @@ def build_environment():
     result["CC"] = "/usr/bin/clang"
     result["CXX"] = "/usr/bin/clang++"
     result["MACOSX_DEPLOYMENT_TARGET"] = DEPLOYMENT_TARGET
+    result["HOMEBREW_PREFIX"] = prefix
+    if architecture:
+        result["CMAKE_OSX_ARCHITECTURES"] = architecture
+        args = result.get("CMAKE_ARGS", "")
+        option = f"-DCMAKE_OSX_ARCHITECTURES={architecture}"
+        if option not in args.split():
+            result["CMAKE_ARGS"] = (args + " " + option).strip()
     result["GIT_SHORT_COMMIT"] = repository_commit()
     return result
 
 
-def cargo_environment():
+def cargo_environment(architecture=None):
     """The build environment with the deployment target renamed for cargo.
 
     Cargo builds proc-macro crates and build scripts for the host and then
@@ -96,7 +104,7 @@ def cargo_environment():
     objects fall back to the compiler default, which is below that minimum and
     therefore links without complaint.
     """
-    result = build_environment()
+    result = build_environment(architecture)
     pinned = result.pop("MACOSX_DEPLOYMENT_TARGET", None)
     if pinned is not None:
         result["OWE_MACOSX_DEPLOYMENT_TARGET"] = pinned
@@ -143,6 +151,8 @@ def main():
         help="Build with the icon --compile-app-icon wrote to DIR instead of compiling it.")
     parser.add_argument("--xcode-setting", action="append", default=[], metavar="NAME=VALUE",
         help="Pass a build setting to xcodebuild; repeatable (CodeQL's traced Swift build uses it).")
+    parser.add_argument("--arch", choices=ARCHITECTURES,
+        help="Build only this architecture (default keeps project.yml's arm64 settings).")
     parser.add_argument("--verbose", action="store_true", help="Echo every tool line instead of only errors.")
     args = parser.parse_args()
     global VERBOSE
@@ -157,9 +167,9 @@ def main():
     compiled_icon = args.app_icon.resolve() if args.app_icon else None
     if compiled_icon and not all((compiled_icon / name).is_file() for name in (*APP_ICON_OUTPUTS, APP_ICON_PLIST)):
         raise SystemExit(f"{compiled_icon} is not --compile-app-icon output")
-    env = build_environment()
+    env = build_environment(args.arch)
     if not args.swift_only:
-        run(["cargo", "build", "--workspace", "--release"], RENDERER, cargo_environment(), stage="cargo")
+        run(["cargo", "build", "--workspace", "--release"], RENDERER, cargo_environment(args.arch), stage="cargo")
         run([RENDERER / "target/release/uniffi-bindgen", "generate", "--library", RENDERER / "target/release/libwallpaper_bridge.a", "--language", "swift", "--no-format", "--out-dir", GENERATED_BRIDGE], cwd=RENDERER, env=env, stage="bindgen")
     if args.renderer_only:
         return
@@ -171,6 +181,9 @@ def main():
         # The asset catalog is still compiled; only the .icon is left out, and with it
         # the app-icon name actool would otherwise look for in the catalog.
         settings = [f"EXCLUDED_SOURCE_FILE_NAMES={APP_ICON.name}", "ASSETCATALOG_COMPILER_APPICON_NAME="]
+    settings += [f"HOMEBREW_PREFIX={env['HOMEBREW_PREFIX']}"]
+    if args.arch:
+        settings += [f"ARCHS={args.arch}", "ONLY_ACTIVE_ARCH=NO"]
     settings += args.xcode_setting
     run(["xcodebuild", "-project", XCODEPROJ.name, "-scheme", "WallpaperMachine", "-configuration", args.configuration, "-derivedDataPath", BUILD, "build", *settings], env=env, stage=f"xcodebuild-{args.configuration}")
     if compiled_icon:

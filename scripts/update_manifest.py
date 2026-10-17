@@ -15,6 +15,8 @@ the name is `AppUpdateConfiguration.manifestName` in the app.
 
     python3 scripts/update_manifest.py --tag v1.0.3 --repository owner/name --notes notes.md \\
         WallpaperMachine-1.0.3-arm64.dmg
+    python3 scripts/update_manifest.py --tag v1.0.3 --repository owner/name --notes notes.md \\
+        --architecture x86_64 WallpaperMachine-1.0.3-x86_64.dmg
 
 Called by .github/workflows/build.yml before publishing; writes the manifest beside the
 image and prints its path.
@@ -49,7 +51,7 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def manifest(tag, repository, notes, image):
+def manifest(tag, repository, notes, image, architecture="arm64"):
     """The manifest for one release, as a dict ready for JSON."""
     match = VERSION_TAG.match(tag)
     if not match:
@@ -57,7 +59,7 @@ def manifest(tag, repository, notes, image):
     if not REPOSITORY.match(repository):
         raise ManifestError(f"{repository!r} is not an owner/name repository.")
     image = Path(image)
-    expected = image_name(match.group(1))
+    expected = image_name(match.group(1), architecture)
     if image.name != expected:
         raise ManifestError(f"{image.name} is not {expected}, the image the updater installs for {tag}.")
     base = f"https://github.com/{repository}/releases"
@@ -80,13 +82,15 @@ def main(argv=None):
     parser.add_argument("--tag", required=True, help="Version tag the release belongs to, like v1.2.3.")
     parser.add_argument("--repository", required=True, help="owner/name of the repository the release is in.")
     parser.add_argument("--notes", required=True, help="Markdown file that becomes the release body.")
+    parser.add_argument("--architecture", choices=["arm64", "x86_64"], default="arm64",
+                        help="Architecture suffix expected in the disk image name.")
     parser.add_argument("image", help="The disk image the release publishes.")
     args = parser.parse_args(argv)
     for path in (args.notes, args.image):
         if not Path(path).is_file():
             raise ManifestError(f"Not a file: {path}")
     output = Path(args.image).with_name(MANIFEST_NAME)
-    content = manifest(args.tag, args.repository, args.notes, args.image)
+    content = manifest(args.tag, args.repository, args.notes, args.image, args.architecture)
     output.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(output)
     print(f"{MARK.ok} {output.name} for {args.tag}: {content['assets'][0]['digest']}", file=sys.stderr)

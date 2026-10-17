@@ -8,7 +8,7 @@ Authoritative build document. Everything here is driven by `scripts/build.py` an
 
 | Requirement | Detail |
 |---|---|
-| Hardware | Apple Silicon only. `project.yml` sets `ARCHS: arm64`, and release disk images are named `-arm64`. |
+| Hardware | Apple Silicon is still the default (`project.yml` keeps `ARCHS: arm64`). There is also an experimental Intel CI path in `.github/workflows/build-intel.yml` that overrides the build architecture to `x86_64`. |
 | macOS | The app runs on macOS 15 or later (`project.yml` pins `deploymentTarget.macOS` and `MACOSX_DEPLOYMENT_TARGET` to `15.0`; `scripts/build.py` passes the same value to the renderer as `OWE_MACOSX_DEPLOYMENT_TARGET`); building needs Xcode 26, so macOS 15.6 or later. Bundled Homebrew dylibs keep the release they were built on, so a package made on a newer macOS requires that newer release (see [packaging](#packaging-and-installing)); CI builds the published image on a `macos-15` runner for that reason. The lock-screen extension stays off below macOS 26. |
 | Xcode | A full Xcode selected with `xcode-select`. The build reads `xcode-select -p` for the toolchain and `xcrun --sdk macosx --show-sdk-path` for the SDK. Command Line Tools alone are not enough. |
 | Homebrew | Provides every renderer dependency; `brew --prefix` is queried at build time. |
@@ -85,6 +85,7 @@ python3 scripts/build.py                          # Debug, everything
 python3 scripts/build.py --configuration Release  # Release, everything
 python3 scripts/build.py --swift-only             # skip the renderer
 python3 scripts/build.py --renderer-only          # renderer + bindings only
+python3 scripts/build.py --configuration Release --arch x86_64  # experimental Intel-only app build
 python3 scripts/build.py --compile-app-icon DIR   # only compile AppIcon.icon + Assets.xcassets into DIR
 python3 scripts/build.py --app-icon DIR           # build with that output instead of compiling the icon
 python3 scripts/build.py --xcode-setting N=V      # also pass build setting N=V to xcodebuild (repeatable)
@@ -151,9 +152,10 @@ to see the raw stream as well, or open the log named in the failure line.
 ## Packaging and installing
 
 ```sh
-python3 scripts/package.py --configuration Release            # bundle, sign, write the disk image
-python3 scripts/package.py --configuration Release --check    # preflight only; the bundle is unchanged
-python3 scripts/package.py --configuration Release --install  # also copy the app to ~/Applications
+python3 scripts/package.py --configuration Release                           # bundle, sign, write the arm64 disk image
+python3 scripts/package.py --configuration Release --architecture x86_64     # experimental Intel-only disk image naming
+python3 scripts/package.py --configuration Release --check                   # preflight only; the bundle is unchanged
+python3 scripts/package.py --configuration Release --install                 # also copy the app to ~/Applications
 ```
 
 CI adds `--require-deployment-target` and `--sign-identity` (see the preflight and
@@ -162,7 +164,7 @@ CI adds `--require-deployment-target` and `--sign-identity` (see the preflight a
 `scripts/package.py` takes the already-built bundle at
 `build/Build/Products/<configuration>/WallpaperMachine.app`, makes it
 self-contained, and wraps it in the drag-to-install disk image
-`WallpaperMachine-<version>-arm64.dmg` with its `.sha256` sidecar beside the app.
+`WallpaperMachine-<version>-<arch>.dmg` with its `.sha256` sidecar beside the app.
 It exits with `Build the application first using scripts/build.py` when that
 bundle is absent.
 
@@ -239,7 +241,8 @@ bundle is absent.
    dependency: …` (Swift runtime libraries are exempt).
 6. **Disk image.** The version is read from the bundle's
    `CFBundleShortVersionString`, and [`scripts/lib/dmg.py`](../scripts/lib/dmg.py)
-   writes `WallpaperMachine-<version>-arm64.dmg`: an HFS+ volume named
+   writes `WallpaperMachine-<version>-<arch>.dmg` (`arm64` by default, `x86_64`
+   when `--architecture x86_64` is passed): an HFS+ volume named
    `WallpaperMachine <version>` holding the bundle (copied with `ditto`, so its
    signatures survive; extended attributes and resource forks stay behind, so the
    File Provider attributes described under Troubleshooting never reach the
@@ -255,13 +258,17 @@ bundle is absent.
    claims, pass `codesign --verify --deep --strict` and meet the same
    [contract](#bundle-contract) as the build, and the `Applications`
    link and the window layout must be there. Only then is
-   `WallpaperMachine-<version>-arm64.dmg.sha256` written, in the format
+   `WallpaperMachine-<version>-<arch>.dmg.sha256` written, in the format
    `shasum -a 256 -c` reads. The in-app updater depends on the image name; see
    [release.md](release.md). The script labels the image not cleared for
    distribution; [../LICENSING.md](../LICENSING.md) records why.
 8. **`--install`.** Copies the bundle to `~/Applications/WallpaperMachine.app`.
    It refuses to overwrite an existing installation: quit and remove the old copy
    first.
+
+The Intel workflow is intentionally separate from the release pipeline and does
+not replace `.github/workflows/build.yml`; Apple Silicon release behavior and
+naming stay unchanged.
 
 The background art is generated, not drawn by hand: `python3 scripts/brand.py
 --dmg` renders both PNGs from `scripts/lib/dmg.py`'s window geometry and the

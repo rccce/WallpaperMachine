@@ -101,6 +101,14 @@ class LayoutRecordTests(unittest.TestCase):
             dmg.ds_store([(".", b"bwsp", b"blob", bytes(dmg.PAGE_SIZE))])
 
 
+class ImageNameTests(unittest.TestCase):
+    def test_default_image_name_is_arm64(self):
+        self.assertEqual(dmg.image_name(VERSION), "WallpaperMachine-1.2.3-arm64.dmg")
+
+    def test_x86_64_image_name(self):
+        self.assertEqual(dmg.image_name(VERSION, "x86_64"), "WallpaperMachine-1.2.3-x86_64.dmg")
+
+
 # Finder reads these formats and no test can run Finder, so the writers are held to the
 # bytes of the implementation Finder is known to accept: ds_store 1.3.3 and mac_alias
 # 2.2.3, which dmgbuild 1.6.7 uses. Each constant below is those packages' output for
