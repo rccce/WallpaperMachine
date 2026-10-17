@@ -54,9 +54,11 @@ class DiskImageError(Exception):
     """A condition that stops building or verifying the image; the message is the whole report."""
 
 
-def image_name(version):
+def image_name(version, architecture="arm64"):
     """The published asset: what `scripts/package.py` writes and the in-app updater selects."""
-    return f"WallpaperMachine-{version}-arm64.dmg"
+    if architecture not in {"arm64", "x86_64"}:
+        raise DiskImageError(f"Unsupported architecture for disk-image naming: {architecture}")
+    return f"WallpaperMachine-{version}-{architecture}.dmg"
 
 
 def volume_name(version):

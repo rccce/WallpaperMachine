@@ -42,6 +42,7 @@ runs:
         brew install --quiet xcodegen cmake quickjs-ng glslang freetype lz4 \
           vulkan-loader vulkan-headers molten-vk eigen nlohmann-json argparse shaderc \
           spirv-tools glm dav1d ccache
+        echo "prefix=$(brew --prefix)" >> "$GITHUB_OUTPUT"
         echo "dav1d=$(brew list --versions dav1d | tr ' ' '-')" >> "$GITHUB_OUTPUT"
         # Bottles, FFmpeg and compiled objects differ per macOS release, so every
         # cache key carries the runner's (macos-15, macos-26).
@@ -51,7 +52,7 @@ runs:
       id: ffmpeg
       uses: actions/cache@v4
       with:
-        path: /opt/homebrew/Cellar/mwe-ffmpeg
+        path: ${{ steps.brew.outputs.prefix }}/Cellar/mwe-ffmpeg
         key: mwe-ffmpeg-${{ steps.brew.outputs.os }}-${{ steps.brew.outputs.dav1d }}-${{ hashFiles('Formula/mwe-ffmpeg.rb') }}
 
     - name: Install the LGPL FFmpeg build
@@ -62,8 +63,9 @@ runs:
       run: |
         set -euo pipefail
         if [ "${{ steps.ffmpeg.outputs.cache-hit }}" = "true" ]; then
-          version="$(ls /opt/homebrew/Cellar/mwe-ffmpeg | sort -V | tail -n 1)"
-          ln -sfn "../Cellar/mwe-ffmpeg/${version}" /opt/homebrew/opt/mwe-ffmpeg
+          prefix="${{ steps.brew.outputs.prefix }}"
+          version="$(ls "${prefix}/Cellar/mwe-ffmpeg" | sort -V | tail -n 1)"
+          ln -sfn "../Cellar/mwe-ffmpeg/${version}" "${prefix}/opt/mwe-ffmpeg"
         fi
         python3 scripts/install_ffmpeg.py
 

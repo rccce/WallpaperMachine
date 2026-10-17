@@ -1,0 +1,114 @@
+name: Build Intel (experimental)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-intel:
+    runs-on: macos-13
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require an Intel runner
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          echo "Runner architecture: ${arch}"
+          if [ "${arch}" != "x86_64" ]; then
+            echo "::error::Intel workflow requires an x86_64 runner."
+            exit 1
+          fi
+
+      - name: Select Xcode 26 when available
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -iv beta | sort -V | tail -n 1 || true)"
+          if [ -z "${xcode}" ]; then
+            echo "::error::No Xcode 26 installation is available on this Intel runner."
+            echo "Installed Xcode bundles:"
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          sudo xcode-select -s "${xcode}"
+          xcodebuild -version
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          brew_prefix="$(brew --prefix)"
+          echo "Homebrew prefix: ${brew_prefix}"
+          if [ "${brew_prefix}" != "/usr/local" ]; then
+            echo "::error::Intel workflow expects Intel Homebrew under /usr/local, got ${brew_prefix}."
+            exit 1
+          fi
+          brew install --quiet xcodegen cmake quickjs-ng glslang freetype lz4 \
+            vulkan-loader vulkan-headers molten-vk eigen nlohmann-json argparse shaderc \
+            spirv-tools glm dav1d ccache
+          python3 scripts/install_ffmpeg.py
+
+      - name: Build x86_64 app
+        run: |
+          set -euo pipefail
+          python3 scripts/build.py --configuration Release --arch x86_64
+
+      - name: Package x86_64 disk image
+        run: |
+          set -euo pipefail
+          python3 scripts/package.py --configuration Release --require-deployment-target --architecture x86_64
+
+      - name: Verify x86_64 slices and packaged linkage
+        run: |
+          set -euo pipefail
+          app="build/Build/Products/Release/WallpaperMachine.app"
+          main_bin="${app}/Contents/MacOS/WallpaperMachine"
+          extension_bin="${app}/Contents/Extensions/WallpaperMachineExtension.appex/Contents/MacOS/WallpaperMachineExtension"
+          adapter_bin="${app}/Contents/Frameworks/MediaRemoteAdapter.framework/Versions/A/MediaRemoteAdapter"
+          bridge_lib="upstream/renderer/target/release/libwallpaper_bridge.a"
+          for file in "${main_bin}" "${extension_bin}" "${adapter_bin}" "${bridge_lib}"; do
+            [ -e "${file}" ] || { echo "::error::Missing ${file}"; exit 1; }
+            file "${file}"
+            lipo -info "${file}"
+            lipo -info "${file}" | grep -q "x86_64" || { echo "::error::${file} is not x86_64"; exit 1; }
+          done
+          for file in "${main_bin}" "${extension_bin}" "${adapter_bin}"; do
+            if otool -L "${file}" | tail -n +2 | grep -E '/(opt/homebrew|usr/local)/' >/dev/null; then
+              echo "::error::Unrelocated Homebrew dependency found in ${file}"
+              otool -L "${file}"
+              exit 1
+            fi
+          done
+
+      - name: Locate x86_64 release artifact
+        id: release
+        run: |
+          set -euo pipefail
+          info="build/Build/Products/Release/WallpaperMachine.app/Contents/Info.plist"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${info}")"
+          name="WallpaperMachine-${version}-x86_64.dmg"
+          directory="build/Build/Products/Release"
+          if [ ! -f "${directory}/${name}" ]; then
+            echo "::error::Missing ${directory}/${name}"
+            ls -1 "${directory}"/*.dmg 2>/dev/null || true
+            exit 1
+          fi
+          checksum="${directory}/${name}.sha256"
+          [ -f "${checksum}" ] || { echo "::error::Missing ${checksum}"; exit 1; }
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "directory=${directory}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload x86_64 image and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-x86_64-release
+          path: |
+            ${{ steps.release.outputs.directory }}/${{ steps.release.outputs.name }}
+            ${{ steps.release.outputs.directory }}/${{ steps.release.outputs.name }}.sha256
+            artifacts/build/
+          if-no-files-found: error
+          retention-days: 14
